@@ -5,8 +5,7 @@ namespace FakeItEasy.Core
     using System.Diagnostics.CodeAnalysis;
     using System.Linq;
     using System.Reflection;
-    using System.Threading;
-    using FakeItEasy.Creation;
+    using FakeItEasy.Configuration;
 
     /// <summary>
     /// The central point in the API for proxied fake objects handles interception
@@ -14,20 +13,28 @@ namespace FakeItEasy.Core
     /// by using the AddRule-method.
     /// </summary>
     [Serializable]
-    public partial class FakeManager
+    public partial class FakeManager : IFakeCallProcessor
     {
         private readonly LinkedList<CallRuleMetadata> allUserRulesField;
         private readonly CallRuleMetadata[] postUserRules;
         private readonly CallRuleMetadata[] preUserRules;
         private readonly List<ICompletedFakeObjectCall> recordedCallsField;
         private readonly LinkedList<IInterceptionListener> interceptionListeners;
-        private WeakReference objectReference;
+        private readonly WeakReference objectReference;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="FakeManager"/> class.
         /// </summary>
-        public FakeManager()
+        /// <param name="fakeObjectType">The faked type.</param>
+        /// <param name="proxy">The faked proxy object.</param>
+        internal FakeManager(Type fakeObjectType, object proxy)
         {
+            Guard.AgainstNull(fakeObjectType, "fakeObjectType");
+            Guard.AgainstNull(proxy, "proxy");
+
+            this.objectReference = new WeakReference(proxy);
+            this.FakeObjectType = fakeObjectType;
+
             this.preUserRules = new[]
                                     {
                                         new CallRuleMetadata { Rule = new EventRule { FakeManager = this } }
@@ -48,23 +55,20 @@ namespace FakeItEasy.Core
         /// <summary>
         /// A delegate responsible for creating FakeObject instances.
         /// </summary>
+        /// <param name="fakeObjectType">The faked type.</param>
+        /// <param name="proxy">The faked proxy object.</param>
         /// <returns>An instance of <see cref="FakeManager"/>.</returns>
-        [SuppressMessage("Microsoft.Design", "CA1034:NestedTypesShouldNotBeVisible", Justification = "Valid pattern for factory delegates.")]
-        public delegate FakeManager Factory();
+        internal delegate FakeManager Factory(Type fakeObjectType, object proxy);
 
         /// <summary>
-        /// Gets the faked object.
+        /// Gets the faked proxy object.
         /// </summary>
+        [SuppressMessage("Microsoft.Naming", "CA1716:IdentifiersShouldNotMatchKeywords", MessageId = "Object", Justification = "Renaming this property would be a breaking change.")]
         public virtual object Object
         {
             get
             {
                 return this.objectReference.Target;
-            }
-
-            private set
-            {
-                this.objectReference = new WeakReference(value);
             }
         }
 
@@ -132,7 +136,7 @@ namespace FakeItEasy.Core
         {
             Guard.AgainstNull(rule, "rule");
 
-            var ruleToRemove = this.AllUserRules.Where(x => x.Rule.Equals(rule)).FirstOrDefault();
+            var ruleToRemove = this.AllUserRules.FirstOrDefault(x => x.Rule.Equals(rule));
             this.AllUserRules.Remove(ruleToRemove);
         }
 
@@ -145,29 +149,9 @@ namespace FakeItEasy.Core
             this.interceptionListeners.AddFirst(listener);
         }
 
-        internal virtual void AttachProxy(Type typeOfFake, object proxy, ICallInterceptedEventRaiser eventRaiser)
-        {
-            this.Object = proxy;
-            this.FakeObjectType = typeOfFake;
-
-            eventRaiser.CallWasIntercepted += this.Proxy_CallWasIntercepted;
-        }
-
-        /// <summary>
-        /// Removes any specified user rules.
-        /// </summary>
-        internal virtual void ClearUserRules()
-        {
-            this.allUserRulesField.Clear();
-        }
-
-        private static void ApplyRule(CallRuleMetadata rule, IInterceptedFakeObjectCall fakeObjectCall)
-        {
-            rule.CalledNumberOfTimes++;
-            rule.Rule.Apply(fakeObjectCall);
-        }
-
-        private void Intercept(IWritableFakeObjectCall fakeObjectCall)
+        [SuppressMessage("Microsoft.Design", "CA1033:InterfaceMethodsShouldBeCallableByChildTypes",
+            Justification = "Explicit implementation to be able to make the IFakeCallProcessor interface internal.")]
+        void IFakeCallProcessor.Process(IWritableFakeObjectCall fakeObjectCall)
         {
             foreach (var listener in this.interceptionListeners)
             {
@@ -201,6 +185,20 @@ namespace FakeItEasy.Core
             }
         }
 
+        /// <summary>
+        /// Removes any specified user rules.
+        /// </summary>
+        internal virtual void ClearUserRules()
+        {
+            this.allUserRulesField.Clear();
+        }
+
+        private static void ApplyRule(CallRuleMetadata rule, IInterceptedFakeObjectCall fakeObjectCall)
+        {
+            rule.CalledNumberOfTimes++;
+            rule.Rule.Apply(fakeObjectCall);
+        }
+
         private void MoveRuleToFront(CallRuleMetadata rule)
         {
             if (this.allUserRulesField.Remove(rule))
@@ -211,13 +209,8 @@ namespace FakeItEasy.Core
 
         private void MoveRuleToFront(IFakeObjectCallRule rule)
         {
-            var metadata = this.AllRules.Where(x => x.Rule.Equals(rule)).Single();
+            var metadata = this.AllRules.Single(x => x.Rule.Equals(rule));
             this.MoveRuleToFront(metadata);
-        }
-
-        private void Proxy_CallWasIntercepted(object sender, CallInterceptedEventArgs e)
-        {
-            this.Intercept(e.Call);
         }
 
         private class InterceptedCallAdapter

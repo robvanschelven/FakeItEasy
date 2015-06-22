@@ -17,7 +17,7 @@
         public void Setup()
         {
             this.foo = A.Fake<IFoo>();
-            this.foo.SomethingHappened += new EventHandler(this.Foo_SomethingHappened);
+            this.foo.SomethingHappened += this.Foo_SomethingHappened;
             this.sender = null;
             this.eventArguments = null;
         }
@@ -26,10 +26,10 @@
         public void Raising_with_sender_and_arguments_should_raise_event_with_specified_sender()
         {
             // Arrange
-            object senderToUse = new object();
+            var senderToUse = new object();
             
             // Act
-            this.foo.SomethingHappened += Raise.With(senderToUse, EventArgs.Empty).Now;
+            this.foo.SomethingHappened += Raise.With(senderToUse, EventArgs.Empty);
 
             // Assert
             this.sender.Should().Be(senderToUse);
@@ -42,7 +42,7 @@
             var arguments = new EventArgs();
 
             // Act
-            this.foo.SomethingHappened += Raise.With(this.foo, arguments).Now;
+            this.foo.SomethingHappened += Raise.With(this.foo, arguments);
 
             // Assert
             this.eventArguments.Should().BeSameAs(arguments);
@@ -54,7 +54,7 @@
             // Arrange
 
             // Act
-            this.foo.SomethingHappened += Raise.With(EventArgs.Empty).Now;
+            this.foo.SomethingHappened += Raise.With(EventArgs.Empty);
 
             // Assert
             this.sender.Should().BeSameAs(this.foo);
@@ -67,48 +67,24 @@
             var arguments = new EventArgs();
 
             // Act
-            this.foo.SomethingHappened += Raise.With(arguments).Now;
+            this.foo.SomethingHappened += Raise.With(arguments);
 
             // Assert
             this.eventArguments.Should().BeSameAs(arguments);
         }
 
         [Test]
-        public void Now_should_throw_when_called_directly()
-        {
-            // Arrange
-            var raiser = new Raise<EventArgs>(null, EventArgs.Empty);
-
-            // Act
-            var exception = Record.Exception(() => raiser.Now(null, null));
-
-            // Assert
-            exception.Should().BeAnExceptionOfType<NotSupportedException>();
-        }
-
-        [Test]
-        public void Go_should_return_handler_with_Now_as_method()
-        {
-            // Arrange
-
-            // Act
-            var methodName = Raise.With(EventArgs.Empty).Go.Method.Name;
-
-            // Assert
-            methodName.Should().Be("Now");
-        }
-
-        [Test]
         public void WithEmpty_should_return_raise_object_with_event_args_empty_set()
         {
             // Arrange
-            var result = Raise.WithEmpty();
+            this.foo = A.Fake<IFoo>();
+            this.foo.SomethingHappened += this.Foo_SomethingHappened;
 
             // Act
-            var eventArgs = (result as IEventRaiserArguments).EventArguments;
+            this.foo.SomethingHappened += Raise.WithEmpty();
 
             // Assert
-            eventArgs.Should().Be(EventArgs.Empty);
+            this.eventArguments.Should().Be(EventArgs.Empty);
         }
 
         [Test]
@@ -118,7 +94,7 @@
             this.foo = A.Fake<IFoo>();
 
             // Act
-            var exception = Record.Exception(() => { foo.SomethingHappened += Raise.WithEmpty().Now; });
+            var exception = Record.Exception(() => { foo.SomethingHappened += Raise.WithEmpty(); });
 
             // Assert
             exception.Should().BeNull();
@@ -132,12 +108,30 @@
             this.foo.SomethingHappened += this.Foo_SomethingHappenedThrows;
 
             // Act
-            Action action = () => this.foo.SomethingHappened += Raise.WithEmpty().Now;
+            Action action = () => this.foo.SomethingHappened += Raise.WithEmpty();
             var exception = Record.Exception(action);
 
             // Assert
             exception.Should().BeAnExceptionOfType<NotImplementedException>()
                 .And.StackTrace.Should().Contain("FakeItEasy.Tests.RaiseTests.Foo_SomethingHappenedThrows");
+        }
+
+        [Test]
+        public void Should_not_leak_handlers_when_raising()
+        {
+            // Arrange
+            var eventHandlerArgumentProvider = ServiceLocator.Current.Resolve<EventHandlerArgumentProviderMap>();
+
+            this.foo = A.Fake<IFoo>();
+            this.foo.SomethingHappened += this.Foo_SomethingHappened;
+
+            EventHandler raisingHandler = Raise.WithEmpty(); // EventHandler to force the implicit conversion
+
+            // Act
+            this.foo.SomethingHappened += raisingHandler;
+
+            // Assert
+            eventHandlerArgumentProvider.Contains(raisingHandler).Should().BeFalse();
         }
 
         private void Foo_SomethingHappened(object newSender, EventArgs e)

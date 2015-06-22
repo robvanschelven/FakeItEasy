@@ -14,7 +14,7 @@
     ///   <item>assemblies whose paths are supplied to the constructor, that also reference FakeItEasy.</item>
     /// </list>
     /// </summary>
-    public class TypeCatalogue : ITypeCatalogue
+    internal class TypeCatalogue : ITypeCatalogue
     {
         private static readonly Assembly FakeItEasyAssembly = Assembly.GetExecutingAssembly();
         private readonly List<Type> availableTypes = new List<Type>();
@@ -119,7 +119,7 @@
         {
             Write(
                 ex,
-                "Warning: FakeItEasy failed to load assembly '{0}' while scanning for extension points. Any IArgumentValueFormatters, IDummyDefinitions, and IFakeConfigurators in that assembly will not be available.",
+                "Warning: FakeItEasy failed to load assembly '{0}' while scanning for extension points. Any IArgumentValueFormatters, IDummyFactories, and IFakeConfigurators in that assembly will not be available.",
                 path);
         }
 
@@ -127,7 +127,7 @@
         {
             Write(
                 ex,
-                "Warning: FakeItEasy failed to get types from assembly '{0}' while scanning for extension points. Any IArgumentValueFormatters, IDummyDefinitions, and IFakeConfigurators in that assembly will not be available.",
+                "Warning: FakeItEasy failed to get types from assembly '{0}' while scanning for extension points. Any IArgumentValueFormatters, IDummyFactories, and IFakeConfigurators in that assembly will not be available.",
                 assembly);
         }
 

@@ -6,13 +6,14 @@
     using System.Linq.Expressions;
     using System.Reflection;
     using System.Reflection.Emit;
+    using FakeItEasy.Configuration;
     using FakeItEasy.Core;
 
     internal class DelegateProxyGenerator
         : IProxyGenerator
     {
         public virtual ProxyGeneratorResult GenerateProxy(
-            Type typeOfProxy, IEnumerable<Type> additionalInterfacesToImplement, IEnumerable<object> argumentsForConstructor)
+            Type typeOfProxy, IEnumerable<Type> additionalInterfacesToImplement, IEnumerable<object> argumentsForConstructor, IFakeCallProcessorProvider fakeCallProcessorProvider)
         {
             Guard.AgainstNull(typeOfProxy, "typeOfProxy");
 
@@ -24,23 +25,26 @@
 
             var invokeMethod = typeOfProxy.GetMethod("Invoke");
 
-            var eventRaiser = new DelegateCallInterceptedEventRaiser();
+            var eventRaiser = new DelegateCallInterceptedEventRaiser(fakeCallProcessorProvider);
 
             var proxy = CreateDelegateProxy(typeOfProxy, invokeMethod, eventRaiser);
 
             eventRaiser.Method = invokeMethod;
             eventRaiser.Instance = proxy;
 
-            return new ProxyGeneratorResult(proxy, eventRaiser);
+            fakeCallProcessorProvider.EnsureInitialized(proxy);
+
+            return new ProxyGeneratorResult(proxy);
         }
 
         public virtual ProxyGeneratorResult GenerateProxy(
             Type typeOfProxy,
             IEnumerable<Type> additionalInterfacesToImplement,
             IEnumerable<object> argumentsForConstructor,
-            IEnumerable<CustomAttributeBuilder> customAttributeBuilders)
+            IEnumerable<CustomAttributeBuilder> customAttributeBuilders,
+            IFakeCallProcessorProvider fakeCallProcessorProvider)
         {
-            return this.GenerateProxy(typeOfProxy, additionalInterfacesToImplement, argumentsForConstructor);
+            return this.GenerateProxy(typeOfProxy, additionalInterfacesToImplement, argumentsForConstructor, fakeCallProcessorProvider);
         }
 
         public virtual bool MethodCanBeInterceptedOnInstance(MethodInfo method, object callTarget, out string failReason)
@@ -70,7 +74,7 @@
         }
 
         private static Expression CreateBodyExpression(
-            MethodInfo delegateMethod, DelegateCallInterceptedEventRaiser eventRaiser, Expression[] parameterExpressions)
+            MethodInfo delegateMethod, DelegateCallInterceptedEventRaiser eventRaiser, IEnumerable<Expression> parameterExpressions)
         {
             var parameterExpressionsCastToObject =
                 parameterExpressions.Select(x => Expression.Convert(x, typeof(object))).Cast<Expression>().ToArray();
@@ -88,16 +92,21 @@
             return body;
         }
 
-        private class DelegateCallInterceptedEventRaiser : ICallInterceptedEventRaiser
+        private class DelegateCallInterceptedEventRaiser
         {
             public static readonly MethodInfo RaiseMethod =
                 typeof(DelegateCallInterceptedEventRaiser).GetMethod("Raise");
 
-            public event EventHandler<CallInterceptedEventArgs> CallWasIntercepted;
+            private readonly IFakeCallProcessorProvider fakeCallProcessorProvider;
 
-            public MethodInfo Method { get; set; }
+            public DelegateCallInterceptedEventRaiser(IFakeCallProcessorProvider fakeCallProcessorProvider)
+            {
+                this.fakeCallProcessorProvider = fakeCallProcessorProvider;
+            }
 
-            public Delegate Instance { get; set; }
+            public MethodInfo Method { private get; set; }
+
+            public Delegate Instance { private get; set; }
 
             // ReSharper disable UnusedMember.Local
             public object Raise(object[] arguments)
@@ -105,19 +114,9 @@
             {
                 var call = new DelegateFakeObjectCall(this.Instance, this.Method, arguments);
 
-                this.RaiseCallWasIntercepted(call);
+                this.fakeCallProcessorProvider.Fetch(this.Instance).Process(call);
 
                 return call.ReturnValue;
-            }
-
-            private void RaiseCallWasIntercepted(DelegateFakeObjectCall call)
-            {
-                var handler = this.CallWasIntercepted;
-
-                if (handler != null)
-                {
-                    this.CallWasIntercepted(null, new CallInterceptedEventArgs(call));
-                }
             }
         }
 

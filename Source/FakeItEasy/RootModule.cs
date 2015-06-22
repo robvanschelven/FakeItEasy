@@ -54,7 +54,11 @@
             container.Register<FakeAsserter.Factory>(c => x => OrderedAssertion.CurrentAsserterFactory.Invoke(x));
 
             container.RegisterSingleton<FakeManager.Factory>(c =>
-                () => new FakeManager());
+                (fakeObjectType, proxy) => new FakeManager(fakeObjectType, proxy));
+
+            container.RegisterSingleton<FakeCallProcessorProvider.Factory>(c =>
+                (typeOfFake, fakeOptions) =>
+                    new FakeManagerProvider(c.Resolve<FakeManager.Factory>(), c.Resolve<IFakeManagerAccessor>(), c.Resolve<IFakeObjectContainer>(), c.Resolve<IFakeWrapperConfigurer>(), typeOfFake, fakeOptions));
 
             container.RegisterSingleton<IFakeObjectCallFormatter>(c =>
                 new DefaultFakeObjectCallFormatter(c.Resolve<ArgumentValueFormatter>(), c.Resolve<IFakeManagerAccessor>()));
@@ -90,23 +94,24 @@
 
             container.Register<IFakeAndDummyManager>(c =>
                                                          {
-                                                             var fakeContainer = c.Resolve<IFakeObjectContainer>();
-                                                             var fakeCreator = new FakeObjectCreator(c.Resolve<IProxyGenerator>(), c.Resolve<IExceptionThrower>(), c.Resolve<IFakeManagerAccessor>(), fakeContainer);
-                                                             var session = new DummyValueCreationSession(fakeContainer, new SessionFakeObjectCreator { Creator = fakeCreator });
+                                                             var fakeCreator = new FakeObjectCreator(c.Resolve<IProxyGenerator>(), c.Resolve<IExceptionThrower>(), c.Resolve<FakeCallProcessorProvider.Factory>());
+                                                             var session = new DummyValueCreationSession(c.Resolve<IFakeObjectContainer>(), new SessionFakeObjectCreator { Creator = fakeCreator });
 
-                                                             return new DefaultFakeAndDummyManager(session, fakeCreator, c.Resolve<IFakeWrapperConfigurer>());
+                                                             return new DefaultFakeAndDummyManager(session, fakeCreator);
                                                          });
 
-            container.RegisterSingleton<CastleDynamicProxyGenerator>(c => new CastleDynamicProxyGenerator(c.Resolve<CastleDynamicProxyInterceptionValidator>()));
+            container.RegisterSingleton(c => new CastleDynamicProxyGenerator(c.Resolve<CastleDynamicProxyInterceptionValidator>()));
 
-            container.RegisterSingleton<IProxyGenerator>(c => new ProxyGeneratorSelector(new DelegateProxyGenerator(), c.Resolve<CastleDynamicProxyGenerator>()));
+            container.RegisterSingleton(c => new DelegateProxyGenerator());
+
+            container.RegisterSingleton<IProxyGenerator>(c => new ProxyGeneratorSelector(c.Resolve<DelegateProxyGenerator>(), c.Resolve<CastleDynamicProxyGenerator>()));
 
             container.RegisterSingleton(
                 c => new CastleDynamicProxyInterceptionValidator(c.Resolve<MethodInfoManager>()));
 
             container.RegisterSingleton<IExceptionThrower>(c => new DefaultExceptionThrower());
 
-            container.RegisterSingleton<IFakeManagerAccessor>(c => new DefaultFakeManagerAccessor(c.Resolve<FakeManager.Factory>()));
+            container.RegisterSingleton<IFakeManagerAccessor>(c => new DefaultFakeManagerAccessor());
 
             container.Register<IFakeWrapperConfigurer>(c =>
                 new DefaultFakeWrapperConfigurer());
@@ -129,12 +134,14 @@
             container.RegisterSingleton<IOutputWriter>(c => new DefaultOutputWriter(Console.Write));
 
             container.Register<ISutInitializer>(c => new DefaultSutInitializer(c.Resolve<IFakeAndDummyManager>()));
+
+            container.RegisterSingleton(c => new EventHandlerArgumentProviderMap());
         }
 
         private class ExpressionCallMatcherFactory
             : IExpressionCallMatcherFactory
         {
-            public DictionaryContainer Container { get; set; }
+            public DictionaryContainer Container { private get; set; }
 
             public ICallMatcher CreateCallMathcer(LambdaExpression callSpecification)
             {
@@ -167,7 +174,7 @@
         private class SessionFakeObjectCreator
             : IFakeObjectCreator
         {
-            public FakeObjectCreator Creator { get; set; }
+            public FakeObjectCreator Creator { private get; set; }
 
             public bool TryCreateFakeObject(Type typeOfFake, DummyValueCreationSession session, out object result)
             {

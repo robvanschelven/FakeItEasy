@@ -1,29 +1,35 @@
 ﻿namespace FakeItEasy.Core
 {
     using System;
+    using System.Collections.Concurrent;
     using System.Collections.Generic;
     using System.Diagnostics.CodeAnalysis;
+    using System.Linq;
 
     /// <summary>
-    /// A IFakeObjectContainer implementation that uses MEF to load IFakeDefinitions and
+    /// A IFakeObjectContainer implementation that uses MEF to load IDummyFactories and
     /// IFakeConfigurations.
     /// </summary>
     public class DynamicContainer
         : IFakeObjectContainer
     {
-        private readonly IDictionary<Type, IFakeConfigurator> registeredConfigurators;
-        private readonly IDictionary<Type, IDummyDefinition> registeredDummyDefinitions;
+        private readonly IEnumerable<IDummyFactory> allDummyFactories;
+        private readonly IEnumerable<IFakeConfigurator> allFakeConfigurators;
+        private readonly ConcurrentDictionary<Type, IFakeConfigurator> cachedFakeConfigurators;
+        private readonly ConcurrentDictionary<Type, IDummyFactory> cachedDummyFactories;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DynamicContainer" /> class.
         /// </summary>
-        /// <param name="dummyDefinitions">The dummy definitions.</param>
+        /// <param name="dummyFactories">The dummy factories.</param>
         /// <param name="fakeConfigurators">The fake configurators.</param>
         [SuppressMessage("Microsoft.Naming", "CA1704:IdentifiersShouldBeSpelledCorrectly", MessageId = "Configurators", Justification = "This is the correct spelling.")]
-        public DynamicContainer(IEnumerable<IDummyDefinition> dummyDefinitions, IEnumerable<IFakeConfigurator> fakeConfigurators)
+        public DynamicContainer(IEnumerable<IDummyFactory> dummyFactories, IEnumerable<IFakeConfigurator> fakeConfigurators)
         {
-            this.registeredDummyDefinitions = CreateDummyDefinitionsDictionary(dummyDefinitions);
-            this.registeredConfigurators = CreateFakeConfiguratorsDictionary(fakeConfigurators);
+            this.allDummyFactories = dummyFactories.OrderByDescending(factory => factory.Priority).ToArray();
+            this.allFakeConfigurators = fakeConfigurators.OrderByDescending(factory => factory.Priority).ToArray();
+            this.cachedDummyFactories = new ConcurrentDictionary<Type, IDummyFactory>();
+            this.cachedFakeConfigurators = new ConcurrentDictionary<Type, IFakeConfigurator>();
         }
 
         /// <summary>
@@ -35,15 +41,17 @@
         /// <returns>True if a fake object can be created.</returns>
         public bool TryCreateDummyObject(Type typeOfDummy, out object fakeObject)
         {
-            IDummyDefinition dummyDefinition = null;
+            var dummyFactory = this.cachedDummyFactories.GetOrAdd(
+                typeOfDummy,
+                type => this.allDummyFactories.FirstOrDefault(factory => factory.CanCreate(type)));
 
-            if (!this.registeredDummyDefinitions.TryGetValue(typeOfDummy, out dummyDefinition))
+            if (dummyFactory == null)
             {
                 fakeObject = null;
                 return false;
             }
 
-            fakeObject = dummyDefinition.CreateDummy();
+            fakeObject = dummyFactory.Create(typeOfDummy);
             return true;
         }
 
@@ -54,22 +62,14 @@
         /// <param name="fakeObject">The fake object to configure.</param>
         public void ConfigureFake(Type typeOfFake, object fakeObject)
         {
-            IFakeConfigurator configurator = null;
+            var fakeConfigurator = this.cachedFakeConfigurators.GetOrAdd(
+                typeOfFake,
+                type => this.allFakeConfigurators.FirstOrDefault(configurator => configurator.CanConfigureFakeOfType(type)));
 
-            if (this.registeredConfigurators.TryGetValue(typeOfFake, out configurator))
+            if (fakeConfigurator != null)
             {
-                configurator.ConfigureFake(fakeObject);
+                fakeConfigurator.ConfigureFake(fakeObject);
             }
-        }
-
-        private static IDictionary<Type, IFakeConfigurator> CreateFakeConfiguratorsDictionary(IEnumerable<IFakeConfigurator> fakeConfigurers)
-        {
-            return fakeConfigurers.FirstFromEachKey(x => x.ForType);
-        }
-
-        private static IDictionary<Type, IDummyDefinition> CreateDummyDefinitionsDictionary(IEnumerable<IDummyDefinition> dummyDefinitions)
-        {
-            return dummyDefinitions.FirstFromEachKey(x => x.ForType);
         }
     }
 }
